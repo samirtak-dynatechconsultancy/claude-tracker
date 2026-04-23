@@ -25,8 +25,9 @@ HANDSHAKE_WINDOW_SECONDS = 60
 # backend (see run_backend below) that forwards into the central Supabase.
 # Because the tracker and backend run in the same exe, backend_url is
 # localhost and backend_api_key is a cosmetic shared constant.
-# These can still be overridden in config.json or via env vars
-# CLAUDE_TRACKER_BACKEND_URL / CLAUDE_TRACKER_BACKEND_API_KEY.
+# These are baked in and NOT read from config.json — there's no sane
+# reason for a teammate to point the upload queue anywhere other than
+# their own local embedded backend.
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8080"
 DEFAULT_BACKEND_API_KEY = "claude-tracker-internal"
 UPLOAD_INTERVAL_SECONDS = 60
@@ -95,6 +96,14 @@ class Config:
 
     @classmethod
     def load_or_create(cls) -> "Config":
+        """Load config.json, creating it on first run.
+
+        Only user-mutable state (shared_secret, created_at, paused) is
+        read from / written to disk. All embedded-backend settings come
+        from the baked DEFAULT_* constants and are never overridden by
+        config.json — this keeps teammates' installs working even if
+        they leave a stale config from an older build lying around.
+        """
         path = config_path()
         if path.exists():
             # utf-8-sig transparently strips a leading BOM if present —
@@ -105,26 +114,11 @@ class Config:
                 shared_secret=data["shared_secret"],
                 created_at=data["created_at"],
                 paused=data.get("paused", False),
-                backend_url=data.get("backend_url", DEFAULT_BACKEND_URL),
-                backend_api_key=data.get("backend_api_key", DEFAULT_BACKEND_API_KEY),
-                run_backend=data.get("run_backend", DEFAULT_RUN_BACKEND),
-                backend_host=data.get("backend_host", DEFAULT_BACKEND_HOST),
-                backend_port=data.get("backend_port", DEFAULT_BACKEND_PORT),
-                backend_env={**DEFAULT_BACKEND_ENV, **data.get("backend_env", {})},
             )
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             cfg = cls(shared_secret=secrets.token_urlsafe(32), created_at=time.time())
             cfg.save()
-
-        # Env overrides win — useful for enterprise rollouts without
-        # baking the URL into per-user config.
-        env_url = os.environ.get("CLAUDE_TRACKER_BACKEND_URL")
-        env_key = os.environ.get("CLAUDE_TRACKER_BACKEND_API_KEY")
-        if env_url is not None:
-            cfg.backend_url = env_url
-        if env_key is not None:
-            cfg.backend_api_key = env_key
         return cfg
 
     def save(self) -> None:
@@ -135,12 +129,6 @@ class Config:
                         "shared_secret": self.shared_secret,
                         "created_at": self.created_at,
                         "paused": self.paused,
-                        "backend_url": self.backend_url,
-                        "backend_api_key": self.backend_api_key,
-                        "run_backend": self.run_backend,
-                        "backend_host": self.backend_host,
-                        "backend_port": self.backend_port,
-                        "backend_env": self.backend_env,
                     },
                     indent=2,
                 ),
