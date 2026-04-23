@@ -34,6 +34,12 @@ pyinstaller `
     --collect-submodules uvicorn `
     --collect-submodules tracker `
     --collect-submodules backend `
+    --collect-all supabase `
+    --collect-all postgrest `
+    --collect-all gotrue `
+    --collect-all storage3 `
+    --collect-all realtime `
+    --collect-all supafunc `
     --add-data "backend/dashboard;backend/dashboard" `
     run_tracker.py
 
