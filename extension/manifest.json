@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Usage Tracker",
+  "version": "0.1.1",
+  "description": "Per-user token tracking for shared claude.ai accounts. Requires the desktop tracker app.",
+  "permissions": ["webNavigation", "storage", "tabs"],
+  "host_permissions": [
+    "https://claude.ai/*",
+    "http://127.0.0.1:47821/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-hook.js"],
+      "matches": ["https://claude.ai/*"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Claude Usage Tracker"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "claude-usage-tracker@local",
+      "strict_min_version": "115.0"
+    }
+  }
+}

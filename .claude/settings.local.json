@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys, json; [print\\(json.dumps\\({k: v for k, v in json.loads\\(l\\).items\\(\\) if k != 'message'} | {'message_keys': list\\(json.loads\\(l\\).get\\('message', {}\\).keys\\(\\)\\), 'usage': json.loads\\(l\\).get\\('message', {}\\).get\\('usage'\\), 'model': json.loads\\(l\\).get\\('message', {}\\).get\\('model'\\), 'message_id': json.loads\\(l\\).get\\('message', {}\\).get\\('id'\\)}, indent=2\\)\\) for l in sys.stdin]\")",
+      "Bash(.venv/Scripts/python.exe -m pip install pytest -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -v)",
+      "Bash(.venv/Scripts/python.exe -c ':*)",
+      "Bash(find /c/Users/Samir.Tak/.claude/projects -name \"*.jsonl\" -exec grep -h '\"entrypoint\"' {} \\\\;)",
+      "Bash(python -c ':*)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pip install -r backend/requirements.txt -q)"
+    ]
+  }
+}

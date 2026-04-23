@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude Usage Tracker — Required</title>
+  <style>
+    :root { color-scheme: light; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f7f7f5; margin: 0; padding: 48px 16px; color: #1a1a1a; }
+    .wrap { max-width: 520px; margin: 0 auto; background: #fff; border: 1px solid #e5e5e0; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+    h1 { font-size: 20px; margin: 0 0 8px 0; }
+    p { line-height: 1.5; color: #444; }
+    .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .status.paused { background: #fef3c7; color: #92400e; }
+    .status.down { background: #fee2e2; color: #991b1b; }
+    ul { padding-left: 20px; color: #444; line-height: 1.6; }
+    .actions { margin-top: 24px; display: flex; gap: 8px; flex-wrap: wrap; }
+    button, a.btn { background: #1a1a1a; color: #fff; border: 0; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-block; }
+    button.secondary, a.btn.secondary { background: #fafaf8; color: #1a1a1a; border: 1px solid #d4d4d0; }
+    .muted { color: #888; font-size: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Claude Usage Tracker is required</h1>
+    <p id="status-line">Status: <span id="status" class="status down">unknown</span></p>
+
+    <p id="hint-down">
+      The desktop tracker app doesn't appear to be running on this machine. claude.ai access is blocked until it's running so per-user usage can be attributed correctly.
+    </p>
+
+    <p id="hint-paused" style="display:none">
+      The tracker is paused. Right-click its tray icon and choose <b>Resume Tracking</b>.
+    </p>
+
+    <ul id="checklist">
+      <li>Make sure <code>ClaudeTracker.exe</code> is running (look for the green circle in your system tray).</li>
+      <li>If you haven't installed it yet, see the install guide.</li>
+      <li>If the tracker was just launched, click <b>Retry</b> below.</li>
+    </ul>
+
+    <div class="actions">
+      <button id="btn-retry">Retry</button>
+      <a class="btn secondary" id="btn-install" href="#" target="_blank">Install guide</a>
+    </div>
+
+    <p class="muted">Destination: <span id="dest"></span></p>
+  </div>
+
+  <script src="blocked.js"></script>
+</body>
+</html>

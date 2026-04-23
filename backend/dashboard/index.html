@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude Usage Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/assets/style.css" />
+  <!-- Apply saved theme before first paint to avoid flash of unthemed content. -->
+  <script>
+    (function () {
+      var t = localStorage.getItem("theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+</head>
+<body>
+  <div id="loading"></div>
+
+  <header>
+    <div class="brand">
+      <div class="logo">C</div>
+      <h1>Claude Usage Tracker</h1>
+      <span id="live-pill" class="pill live" title="Auto-refreshing every 60s">
+        <span class="dot"></span><span id="live-label">live</span>
+      </span>
+    </div>
+    <div class="meta" id="generated-at"></div>
+    <div class="controls">
+      <button type="button" id="btn-refresh" class="icon" title="Refresh now">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path></svg>
+        Refresh
+      </button>
+      <button type="button" id="btn-pause" class="icon" title="Pause auto-refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+        Pause
+      </button>
+      <button type="button" id="btn-theme" class="icon" title="Toggle dark mode">
+        <svg id="icon-theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Top-line KPIs -->
+    <section>
+      <h2>At a glance</h2>
+      <div class="kpis">
+        <div class="kpi highlight">
+          <div class="label">Output tokens (today)</div>
+          <div class="value" id="kpi-today">—</div>
+          <div class="sub" id="kpi-today-sub"></div>
+        </div>
+        <div class="kpi">
+          <div class="label">Output tokens (7d)</div>
+          <div class="value" id="kpi-week">—</div>
+          <div class="sub" id="kpi-week-sub"></div>
+        </div>
+        <div class="kpi">
+          <div class="label">Messages (all time)</div>
+          <div class="value" id="kpi-messages">—</div>
+          <div class="sub" id="kpi-messages-sub"></div>
+        </div>
+        <div class="kpi">
+          <div class="label">Active users (today)</div>
+          <div class="value" id="kpi-users">—</div>
+          <div class="sub" id="kpi-users-sub"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Filters -->
+    <section>
+      <h2>Filters</h2>
+      <form id="filters" class="filters" onsubmit="return false;">
+        <div class="field">
+          <label for="f-start">Start date</label>
+          <input type="date" id="f-start" />
+        </div>
+        <div class="field">
+          <label for="f-end">End date</label>
+          <input type="date" id="f-end" />
+        </div>
+        <div class="field">
+          <label>Sources</label>
+          <div class="checks" id="f-sources">
+            <label><input type="checkbox" value="ai_web" checked /> ai_web</label>
+            <label><input type="checkbox" value="code" checked /> code</label>
+            <label><input type="checkbox" value="desktop" checked /> desktop</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-users">Users</label>
+          <select id="f-users" multiple size="4" title="Ctrl/Cmd-click to multi-select; leave empty for all"></select>
+        </div>
+        <div class="actions">
+          <button type="button" id="f-reset">Reset</button>
+          <button type="button" id="f-apply" class="primary">Apply</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Leaderboards -->
+    <section>
+      <h2>Leaderboards — output tokens</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Today <span class="badge">24h</span></h3>
+          <table id="lb-today"><thead><tr><th>User</th><th class="num">Msgs</th><th class="num">Out tokens</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h3>This week <span class="badge">7d</span></h3>
+          <table id="lb-week"><thead><tr><th>User</th><th class="num">Msgs</th><th class="num">Out tokens</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h3>All time <span class="badge">∞</span></h3>
+          <table id="lb-all"><thead><tr><th>User</th><th class="num">Msgs</th><th class="num">Out tokens</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section>
+      <h2>Per-user breakdown by source</h2>
+      <div class="card"><canvas id="chart-by-source" height="110"></canvas></div>
+    </section>
+
+    <section>
+      <h2>Daily output tokens</h2>
+      <div class="card"><canvas id="chart-daily" height="110"></canvas></div>
+    </section>
+
+    <!-- Raw totals -->
+    <section>
+      <h2>
+        Raw totals
+        <button type="button" id="btn-export" class="icon" title="Download as CSV">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Export CSV
+        </button>
+      </h2>
+      <div class="card" style="overflow-x:auto">
+        <table id="raw-totals">
+          <thead>
+            <tr>
+              <th>User</th><th>Source</th>
+              <th class="num">Msgs</th><th class="num">In</th><th class="num">Out</th>
+              <th class="num">Cache create</th><th class="num">Cache read</th>
+              <th class="num">Sess start</th><th class="num">Sess end</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="/assets/dashboard.js"></script>
+</body>
+</html>

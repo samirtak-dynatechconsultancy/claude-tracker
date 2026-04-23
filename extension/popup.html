@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude Usage Tracker</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 280px; padding: 12px; margin: 0; color: #1a1a1a; }
+    h1 { font-size: 14px; margin: 0 0 8px 0; font-weight: 600; }
+    .row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+    .label { color: #666; }
+    .value { font-variant-numeric: tabular-nums; }
+    .status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+    .status.ok { background: #16a34a; }
+    .status.paused { background: #f59e0b; }
+    .status.down { background: #dc2626; }
+    .status.unknown { background: #9ca3af; }
+    section { border-top: 1px solid #eee; margin-top: 8px; padding-top: 8px; }
+    section:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+    button { border: 1px solid #d4d4d0; background: #fafaf8; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    button:hover { background: #f0f0ea; }
+    .error { color: #dc2626; font-size: 12px; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>Claude Usage Tracker</h1>
+    <div class="row">
+      <span class="label">Tracker:</span>
+      <span class="value"><span id="status-dot" class="status unknown"></span><span id="status-text">checking...</span></span>
+    </div>
+    <div class="row">
+      <span class="label">User:</span>
+      <span class="value" id="user">—</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <span class="label">Today — out tokens:</span>
+      <span class="value" id="today-out">—</span>
+    </div>
+    <div class="row">
+      <span class="label">Today — messages:</span>
+      <span class="value" id="today-msgs">—</span>
+    </div>
+    <div class="row">
+      <span class="label">This week — out tokens:</span>
+      <span class="value" id="week-out">—</span>
+    </div>
+  </section>
+
+  <section>
+    <div style="display:flex; gap:8px;">
+      <button id="btn-refresh">Refresh</button>
+      <button id="btn-handshake">Re-handshake</button>
+    </div>
+    <div id="error" class="error"></div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

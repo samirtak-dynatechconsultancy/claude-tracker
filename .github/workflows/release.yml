@@ -1,0 +1,77 @@
+name: Release
+
+# Builds the Windows tracker exe + zips the browser extension and attaches
+# both to a GitHub Release whenever you push a tag like `v0.1.0`.
+#
+# Usage:
+#     git tag v0.1.0
+#     git push origin v0.1.0
+#
+# The workflow also runs manually via the "Run workflow" button; in that
+# mode it builds artifacts but does NOT publish a release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required to create releases + upload assets
+
+jobs:
+  build-windows:
+    name: Build Windows exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tracker/requirements.txt
+          pip install pyinstaller
+
+      - name: Build exe
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Package extension
+        shell: pwsh
+        run: Compress-Archive -Path extension/* -DestinationPath dist/ClaudeTracker-extension.zip
+
+      - name: Copy install docs into dist
+        shell: pwsh
+        run: |
+          Copy-Item release/README.md dist/README.md
+          if (Test-Path install.md) { Copy-Item install.md dist/INSTALL.md }
+
+      - name: Upload build artifacts (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeTracker-${{ github.sha }}
+          path: |
+            dist/ClaudeTracker.exe
+            dist/ClaudeTracker-extension.zip
+            dist/README.md
+
+      - name: Create GitHub Release (tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ClaudeTracker ${{ github.ref_name }}"
+          body_path: release/RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/ClaudeTracker.exe
+            dist/ClaudeTracker-extension.zip
+            dist/README.md
