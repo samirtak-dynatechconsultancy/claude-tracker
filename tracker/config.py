@@ -21,12 +21,31 @@ API_HOST = "127.0.0.1"
 API_PORT = 47821
 HANDSHAKE_WINDOW_SECONDS = 60
 
-# Backend upload (optional). Can be overridden in config.json or via env vars
+# Backend upload defaults. Every tracker runs its own embedded FastAPI
+# backend (see run_backend below) that forwards into the central Supabase.
+# Because the tracker and backend run in the same exe, backend_url is
+# localhost and backend_api_key is a cosmetic shared constant.
+# These can still be overridden in config.json or via env vars
 # CLAUDE_TRACKER_BACKEND_URL / CLAUDE_TRACKER_BACKEND_API_KEY.
-DEFAULT_BACKEND_URL = ""  # empty disables uploads
-DEFAULT_BACKEND_API_KEY = ""
+DEFAULT_BACKEND_URL = "http://127.0.0.1:8080"
+DEFAULT_BACKEND_API_KEY = "claude-tracker-internal"
 UPLOAD_INTERVAL_SECONDS = 60
 UPLOAD_BATCH_SIZE = 100
+
+# Defaults for the embedded backend. These are applied to every fresh
+# config.json so new installs auto-configure. Anon Supabase key + admin
+# creds are deliberately baked in — they only protect the central store
+# via Supabase RLS, and shipping them is how a zero-config team deploy
+# works. Rotate them in Supabase if a machine goes missing.
+DEFAULT_RUN_BACKEND = True
+DEFAULT_BACKEND_HOST = "127.0.0.1"
+DEFAULT_BACKEND_PORT = 8080
+DEFAULT_BACKEND_ENV = {
+    "SUPABASE_URL": "https://mbezrhsfiewdpulxmtrk.supabase.co",
+    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1iZXpyaHNmaWV3ZHB1bHhtdHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MjIyNDMsImV4cCI6MjA5MjQ5ODI0M30.ineH3EyjkS8m8CYmm1NACu9qksS5u4cs94q1Hq9MxF4",
+    "CLAUDE_TRACKER_ADMIN_USER": "admin",
+    "CLAUDE_TRACKER_ADMIN_PASS": "admin",
+}
 
 
 def app_data_dir() -> Path:
@@ -61,16 +80,15 @@ class Config:
     paused: bool = False
     backend_url: str = DEFAULT_BACKEND_URL
     backend_api_key: str = DEFAULT_BACKEND_API_KEY
-    # Optional: run the FastAPI backend inside this process so one exe
-    # serves both tracking and the dashboard. Typically only true on the
-    # machine that acts as the central server.
-    run_backend: bool = False
-    backend_host: str = "127.0.0.1"
-    backend_port: int = 8080
+    # Every exe runs its own embedded FastAPI backend by default, all
+    # pointing at the shared Supabase — see DEFAULT_BACKEND_ENV above.
+    run_backend: bool = DEFAULT_RUN_BACKEND
+    backend_host: str = DEFAULT_BACKEND_HOST
+    backend_port: int = DEFAULT_BACKEND_PORT
     # Extra env vars pushed into os.environ before the embedded backend
     # imports — e.g. CLAUDE_TRACKER_ADMIN_USER/PASS, SUPABASE_URL,
     # SUPABASE_ANON_KEY, CLAUDE_TRACKER_BACKEND_DB.
-    backend_env: dict = field(default_factory=dict)
+    backend_env: dict = field(default_factory=lambda: dict(DEFAULT_BACKEND_ENV))
     launch_time: float = field(default_factory=time.time)
 
     _lock: RLock = field(default_factory=RLock, repr=False, compare=False)
@@ -89,10 +107,10 @@ class Config:
                 paused=data.get("paused", False),
                 backend_url=data.get("backend_url", DEFAULT_BACKEND_URL),
                 backend_api_key=data.get("backend_api_key", DEFAULT_BACKEND_API_KEY),
-                run_backend=data.get("run_backend", False),
-                backend_host=data.get("backend_host", "127.0.0.1"),
-                backend_port=data.get("backend_port", 8080),
-                backend_env=data.get("backend_env", {}),
+                run_backend=data.get("run_backend", DEFAULT_RUN_BACKEND),
+                backend_host=data.get("backend_host", DEFAULT_BACKEND_HOST),
+                backend_port=data.get("backend_port", DEFAULT_BACKEND_PORT),
+                backend_env={**DEFAULT_BACKEND_ENV, **data.get("backend_env", {})},
             )
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
