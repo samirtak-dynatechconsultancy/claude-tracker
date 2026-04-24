@@ -406,11 +406,36 @@ def launch_claude_and_continue() -> str | None:
 
 
 def _watchdog_script_path() -> Path:
-    """Where we drop the watchdog helper script on disk."""
+    """Where we drop the watchdog helper PowerShell script on disk."""
     base = os.environ.get("APPDATA")
     root = Path(base) / "ClaudeTracker" if base else Path.home() / ".claude-tracker"
     root.mkdir(parents=True, exist_ok=True)
     return root / "watchdog.ps1"
+
+
+def _watchdog_launcher_path() -> Path:
+    """Path to the VBS launcher that runs the PowerShell with no console.
+
+    Launching powershell.exe directly from Task Scheduler briefly flashes
+    a console window even with -WindowStyle Hidden, because conhost is
+    allocated before PowerShell processes its own flags. Routing through
+    wscript.exe + a .vbs stub (``WShell.Run ..., 0, False``) runs the
+    child truly windowless — wscript never allocates a console.
+    """
+    return _watchdog_script_path().with_name("watchdog_launcher.vbs")
+
+
+def _watchdog_launcher_contents(script_path: Path) -> str:
+    ps_cmd = (
+        "powershell.exe -NoProfile -NonInteractive "
+        "-ExecutionPolicy Bypass "
+        f'-File ""{script_path}""'
+    )
+    # Run-style 0 = hidden window; the final False = fire-and-forget.
+    return (
+        'CreateObject("WScript.Shell").Run '
+        f'"{ps_cmd}", 0, False\r\n'
+    )
 
 
 def _watchdog_script_contents(tracker_exe: str, probe_port: int) -> str:
@@ -451,35 +476,42 @@ def ensure_watchdog_task(tracker_exe: str) -> bool:
     import subprocess
 
     script_path = _watchdog_script_path()
-    desired = _watchdog_script_contents(tracker_exe, _WATCHDOG_PROBE_PORT)
+    launcher_path = _watchdog_launcher_path()
+    desired_script = _watchdog_script_contents(tracker_exe, _WATCHDOG_PROBE_PORT)
+    desired_launcher = _watchdog_launcher_contents(script_path)
 
-    # Only rewrite the helper script when its contents changed — avoids
-    # pointless disk churn on every startup.
-    script_changed = False
-    if not script_path.exists() or script_path.read_text(encoding="utf-8") != desired:
-        script_path.write_text(desired, encoding="utf-8")
-        script_changed = True
+    # Only rewrite helpers when contents changed — avoids disk churn.
+    files_changed = False
+    if (
+        not script_path.exists()
+        or script_path.read_text(encoding="utf-8") != desired_script
+    ):
+        script_path.write_text(desired_script, encoding="utf-8")
+        files_changed = True
+    if (
+        not launcher_path.exists()
+        or launcher_path.read_text(encoding="utf-8") != desired_launcher
+    ):
+        launcher_path.write_text(desired_launcher, encoding="utf-8")
+        files_changed = True
 
-    # Check whether the task already exists AND points at the right script.
+    # Check whether the task already exists AND points at the right launcher.
     query = subprocess.run(
         ["schtasks", "/Query", "/TN", WATCHDOG_TASK_NAME, "/V", "/FO", "LIST"],
         capture_output=True,
         text=True,
     )
     task_exists = query.returncode == 0
-    task_ok = task_exists and str(script_path) in (query.stdout or "")
+    task_ok = task_exists and str(launcher_path) in (query.stdout or "")
 
-    if task_ok and not script_changed:
+    if task_ok and not files_changed:
         return False
 
     # Rewrite from scratch. /F forces overwrite if it already exists.
     # /SC MINUTE /MO 1 = repeat every 1 minute forever.
     # /RL LIMITED = run as the current user with standard privileges.
-    tr = (
-        "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden "
-        "-ExecutionPolicy Bypass "
-        f'-File "{script_path}"'
-    )
+    # wscript.exe runs the .vbs headless — no console flash.
+    tr = f'wscript.exe "{launcher_path}"'
     create = subprocess.run(
         [
             "schtasks",
@@ -519,12 +551,13 @@ def remove_watchdog_task() -> None:
         capture_output=True,
         text=True,
     )
-    try:
-        _watchdog_script_path().unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        log.warning("could not delete watchdog script: %s", exc)
+    for p in (_watchdog_script_path(), _watchdog_launcher_path()):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            log.warning("could not delete %s: %s", p, exc)
 
 
 def already_running_on(host: str, port: int) -> bool:
