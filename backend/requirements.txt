@@ -1,7 +1,0 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-pydantic==2.9.2
-python-dotenv==1.0.1
-# Supabase backend (HTTP PostgREST). Only imported when SUPABASE_URL +
-# SUPABASE_ANON_KEY are set; SQLite fallback needs nothing extra.
-supabase==2.9.1
