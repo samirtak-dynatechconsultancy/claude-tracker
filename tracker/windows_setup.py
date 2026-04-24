@@ -21,6 +21,11 @@ log = logging.getLogger(__name__)
 PROTOCOL = "claudetracker"
 RUN_VALUE_NAME = "ClaudeTracker"
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+WATCHDOG_TASK_NAME = "ClaudeTrackerWatchdog"
+# API port the watchdog probes to decide whether the tracker is live —
+# must match API_PORT in config.py. Kept local here to avoid a circular
+# import (config imports nothing from windows_setup).
+_WATCHDOG_PROBE_PORT = 47821
 
 # Places Claude Desktop's installer drops shortcuts. We retarget any we
 # find so that launching Claude goes through the tracker first.
@@ -118,6 +123,15 @@ def install(quiet: bool = False) -> bool:
     except Exception as wrap_exc:  # noqa: BLE001
         log.warning("shortcut wrap skipped: %s", wrap_exc)
 
+    # 4. Watchdog scheduled task — self-heal if someone kills the tracker
+    #    while Claude.exe is still running. Autostart covers logins; this
+    #    covers the "user quit tracker, then opened Claude" edge case.
+    try:
+        if ensure_watchdog_task(exe):
+            changed = True
+    except Exception as wd_exc:  # noqa: BLE001
+        log.warning("watchdog task install skipped: %s", wd_exc)
+
     return changed
 
 
@@ -153,6 +167,12 @@ def uninstall() -> None:
                 pass
     except FileNotFoundError:
         pass
+
+    # Remove the watchdog scheduled task if present.
+    try:
+        remove_watchdog_task()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("watchdog uninstall skipped: %s", exc)
 
     log.info("Windows self-install removed")
 
@@ -383,6 +403,128 @@ def launch_claude_and_continue() -> str | None:
         subprocess.Popen([target], close_fds=True)
         return target
     return None
+
+
+def _watchdog_script_path() -> Path:
+    """Where we drop the watchdog helper script on disk."""
+    base = os.environ.get("APPDATA")
+    root = Path(base) / "ClaudeTracker" if base else Path.home() / ".claude-tracker"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "watchdog.ps1"
+
+
+def _watchdog_script_contents(tracker_exe: str, probe_port: int) -> str:
+    """The PowerShell the scheduled task runs every minute.
+
+    Starts the tracker iff:
+      * Claude.exe is a live process, AND
+      * nothing is already bound to the tracker's API port.
+    The single-instance guard inside the tracker is a belt; this is the
+    suspenders — we avoid even firing Start-Process when we don't need to.
+    """
+    # Double any backslashes so the path survives embedding in the
+    # single-quoted PowerShell literal below.
+    exe_literal = tracker_exe.replace("'", "''")
+    return (
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "if (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue) {\n"
+        "  $probe = New-Object System.Net.Sockets.TcpClient\n"
+        "  try { $probe.Connect('127.0.0.1', " + str(probe_port) + ") } catch {}\n"
+        "  $up = $probe.Connected\n"
+        "  $probe.Close()\n"
+        "  if (-not $up) {\n"
+        f"    Start-Process -FilePath '{exe_literal}' -WindowStyle Hidden\n"
+        "  }\n"
+        "}\n"
+    )
+
+
+def ensure_watchdog_task(tracker_exe: str) -> bool:
+    """Register (or refresh) the watchdog scheduled task.
+
+    Uses ``schtasks.exe`` because it's always available, requires no
+    PowerShell execution-policy waivers, and runs under the current user
+    (no admin / UAC prompt). Task runs every minute indefinitely.
+
+    Returns True if we created or rewrote anything.
+    """
+    import subprocess
+
+    script_path = _watchdog_script_path()
+    desired = _watchdog_script_contents(tracker_exe, _WATCHDOG_PROBE_PORT)
+
+    # Only rewrite the helper script when its contents changed — avoids
+    # pointless disk churn on every startup.
+    script_changed = False
+    if not script_path.exists() or script_path.read_text(encoding="utf-8") != desired:
+        script_path.write_text(desired, encoding="utf-8")
+        script_changed = True
+
+    # Check whether the task already exists AND points at the right script.
+    query = subprocess.run(
+        ["schtasks", "/Query", "/TN", WATCHDOG_TASK_NAME, "/V", "/FO", "LIST"],
+        capture_output=True,
+        text=True,
+    )
+    task_exists = query.returncode == 0
+    task_ok = task_exists and str(script_path) in (query.stdout or "")
+
+    if task_ok and not script_changed:
+        return False
+
+    # Rewrite from scratch. /F forces overwrite if it already exists.
+    # /SC MINUTE /MO 1 = repeat every 1 minute forever.
+    # /RL LIMITED = run as the current user with standard privileges.
+    tr = (
+        "powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden "
+        "-ExecutionPolicy Bypass "
+        f'-File "{script_path}"'
+    )
+    create = subprocess.run(
+        [
+            "schtasks",
+            "/Create",
+            "/TN",
+            WATCHDOG_TASK_NAME,
+            "/SC",
+            "MINUTE",
+            "/MO",
+            "1",
+            "/TR",
+            tr,
+            "/RL",
+            "LIMITED",
+            "/F",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if create.returncode != 0:
+        log.warning(
+            "schtasks create failed (rc=%s): %s",
+            create.returncode,
+            (create.stderr or create.stdout or "").strip(),
+        )
+        return False
+    log.info("watchdog scheduled task registered (%s)", WATCHDOG_TASK_NAME)
+    return True
+
+
+def remove_watchdog_task() -> None:
+    """Delete the watchdog task + its helper script. Safe if missing."""
+    import subprocess
+
+    subprocess.run(
+        ["schtasks", "/Delete", "/TN", WATCHDOG_TASK_NAME, "/F"],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        _watchdog_script_path().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log.warning("could not delete watchdog script: %s", exc)
 
 
 def already_running_on(host: str, port: int) -> bool:
