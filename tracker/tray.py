@@ -30,11 +30,12 @@ def build_tray(config: Config, on_quit: Callable[[], None]) -> pystray.Icon:
         return f"Status: {'Paused' if config.paused else 'Running'}"
 
     def open_dashboard(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
-        # Prefer the central backend dashboard if configured; fall back to
-        # the local /ping (works without the shared secret so it always
-        # opens in a browser).
-        if config.backend_url:
-            webbrowser.open(config.backend_url.rstrip("/") + "/")
+        # Prefer a central dashboard URL when baked into config; otherwise
+        # fall through to the local /ping so the menu item does *something*
+        # useful (confirms the tracker is alive).
+        url = getattr(config, "dashboard_url", "") or ""
+        if url:
+            webbrowser.open(url)
         else:
             webbrowser.open(f"http://{API_HOST}:{API_PORT}/ping")
 

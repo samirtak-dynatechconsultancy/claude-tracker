@@ -2,11 +2,10 @@
 
 Layout:
     [main thread]   pystray icon loop
-    [thread]        uvicorn (localhost API)
+    [thread]        uvicorn (localhost API — serves the extension's /ping)
     [thread]        claude_code_parser poller (every 60s)
     [thread]        desktop_detector poller (every 30s)
-    [thread]        backend_client uploader (every 60s, if configured)
-    [thread]        embedded FastAPI backend (only if config.run_backend)
+    [thread]        backend_client uploader (every 60s, posts direct to Supabase)
 """
 
 from __future__ import annotations
@@ -24,52 +23,16 @@ from .tray import build_tray
 from .upload_queue import UploadQueue
 
 
-def _run_embedded_backend(config: Config) -> None:
-    """Boot the FastAPI backend in a background thread.
-
-    The tracker's upload key and the backend's expected key MUST match or
-    every POST /events gets rejected with 401 — so we copy the tracker's
-    `backend_api_key` into `CLAUDE_TRACKER_API_KEY` unconditionally (env
-    var wins over whatever the process inherited). Other env vars from
-    config.backend_env are merged in with `setdefault` so pre-existing
-    shell env still takes priority.
-    """
-    os.environ["CLAUDE_TRACKER_API_KEY"] = config.backend_api_key
-    for k, v in (config.backend_env or {}).items():
-        os.environ.setdefault(k, str(v))
-
-    # Import lazily so the backend package only loads when actually used —
-    # keeps tracker-only startups fast and PyInstaller bundles lean if
-    # this code path is stripped out later.
-    import asyncio
-    import uvicorn
-    from backend.main import app as backend_app
-
-    uv_config = uvicorn.Config(
-        backend_app,
-        host=config.backend_host,
-        port=config.backend_port,
-        log_level="info",
-    )
-    server = uvicorn.Server(uv_config)
-    # uvicorn installs SIGINT/SIGTERM handlers that only work on the main
-    # thread; skip them so running inside a non-main thread doesn't blow up.
-    server.install_signal_handlers = lambda: None
-    asyncio.run(server.serve())
-
-
 def _setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    # httpx logs every outbound request at INFO — the supabase client fires
-    # one per insert, which floods the console during queue drains. We only
-    # care about failures from here.
+    # httpx logs every outbound request at INFO — one per Supabase insert.
+    # Only failures matter here.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    # uvicorn's access log echoes every /events POST. Kept at WARNING so
-    # 4xx/5xx still surface but 200s don't.
+    # uvicorn's access log echoes every /ping from the extension.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
@@ -94,7 +57,6 @@ def main() -> int:
     # every click, so without this we'd pile up duplicates.
     if windows_setup.already_running_on(API_HOST, API_PORT):
         if launch_claude_requested:
-            # Tracker's up — just hand off to Claude Desktop and exit.
             target = windows_setup.launch_claude_and_continue()
             if target:
                 print(f"ClaudeTracker already running; launched Claude ({target}).")
@@ -104,8 +66,6 @@ def main() -> int:
             print("ClaudeTracker is already running — exiting.")
         return 0
 
-    # In --launch-claude mode, spawn Claude alongside booting the tracker
-    # so the user doesn't stare at nothing while uvicorn starts up.
     if launch_claude_requested:
         target = windows_setup.launch_claude_and_continue()
         if target:
@@ -113,8 +73,7 @@ def main() -> int:
         else:
             print("Claude Desktop not found — starting tracker only.")
 
-    # Self-install on every run. Idempotent; only writes if anything changed,
-    # and silently no-ops when running from source.
+    # Self-install on every run. Idempotent; no-op when running from source.
     try:
         windows_setup.install()
     except Exception as exc:  # noqa: BLE001 — never let registry issues crash startup
@@ -130,14 +89,7 @@ def main() -> int:
     print(f"Claude Usage Tracker starting for user={os_username()}")
     print(f"API: http://{API_HOST}:{API_PORT}")
     print(f"Shared secret (first 8): {config.shared_secret[:8]}...")
-    if config.backend_url:
-        print(f"Backend: {config.backend_url} (queue depth={queue.depth()})")
-    else:
-        print("Backend: disabled (set backend_url in config.json to enable)")
-    if config.run_backend:
-        print(
-            f"Embedded backend: http://{config.backend_host}:{config.backend_port}"
-        )
+    print(f"Supabase: {config.supabase_url} (queue depth={queue.depth()})")
 
     threads = [
         threading.Thread(
@@ -162,15 +114,6 @@ def main() -> int:
             name="uploader",
         ),
     ]
-    if config.run_backend:
-        threads.append(
-            threading.Thread(
-                target=_run_embedded_backend,
-                args=(config,),
-                daemon=True,
-                name="backend",
-            )
-        )
     for t in threads:
         t.start()
 

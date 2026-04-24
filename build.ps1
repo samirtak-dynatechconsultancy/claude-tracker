@@ -16,16 +16,16 @@ if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
     Write-Error "pyinstaller not found. Run: pip install pyinstaller"
 }
 
-# --windowed hides the console window (tray-only app).
-# --name sets the exe filename.
-# --noconfirm overwrites any existing dist/build dirs.
-# --collect-submodules pystray/uvicorn picks up backend modules that would
-#   otherwise be missed.
-# --collect-submodules tracker bundles every tracker/*.py so the package
-#   imports resolve at runtime (the loose script entry misses some of them).
-# Entry point is run_tracker.py (repo root) not tracker\main.py — PyInstaller
-# treats its entry script as the top-level module, so pointing at main.py
-# directly breaks `from . import ...` inside the package.
+# --onefile            single-file exe.
+# --name               output filename.
+# --noconfirm          overwrite any existing dist/build dirs.
+# --collect-submodules pystray / uvicorn — hidden imports those libs do at runtime.
+# --collect-submodules tracker — bundle every tracker/*.py (the loose entry
+#     script otherwise misses some). The `backend` package is deliberately NOT
+#     bundled: the tracker now pushes straight to Supabase over HTTPS and the
+#     dashboard lives as a standalone deploy.
+# Entry point is run_tracker.py (repo root) so `from . import ...` inside the
+# tracker package resolves correctly.
 pyinstaller `
     --noconfirm `
     --onefile `
@@ -33,14 +33,6 @@ pyinstaller `
     --collect-submodules pystray `
     --collect-submodules uvicorn `
     --collect-submodules tracker `
-    --collect-submodules backend `
-    --collect-all supabase `
-    --collect-all postgrest `
-    --collect-all gotrue `
-    --collect-all storage3 `
-    --collect-all realtime `
-    --collect-all supafunc `
-    --add-data "backend/dashboard;backend/dashboard" `
     run_tracker.py
 
 Write-Host ""

@@ -21,32 +21,21 @@ API_HOST = "127.0.0.1"
 API_PORT = 47821
 HANDSHAKE_WINDOW_SECONDS = 60
 
-# Backend upload defaults. Every tracker runs its own embedded FastAPI
-# backend (see run_backend below) that forwards into the central Supabase.
-# Because the tracker and backend run in the same exe, backend_url is
-# localhost and backend_api_key is a cosmetic shared constant.
-# These are baked in and NOT read from config.json — there's no sane
-# reason for a teammate to point the upload queue anywhere other than
-# their own local embedded backend.
-DEFAULT_BACKEND_URL = "http://127.0.0.1:8080"
-DEFAULT_BACKEND_API_KEY = "claude-tracker-internal"
+# Upload tuning (applied to the direct-to-Supabase uploader).
 UPLOAD_INTERVAL_SECONDS = 60
 UPLOAD_BATCH_SIZE = 100
 
-# Defaults for the embedded backend. These are applied to every fresh
-# config.json so new installs auto-configure. Anon Supabase key + admin
-# creds are deliberately baked in — they only protect the central store
-# via Supabase RLS, and shipping them is how a zero-config team deploy
-# works. Rotate them in Supabase if a machine goes missing.
-DEFAULT_RUN_BACKEND = True
-DEFAULT_BACKEND_HOST = "127.0.0.1"
-DEFAULT_BACKEND_PORT = 8080
-DEFAULT_BACKEND_ENV = {
-    "SUPABASE_URL": "https://mbezrhsfiewdpulxmtrk.supabase.co",
-    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1iZXpyaHNmaWV3ZHB1bHhtdHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MjIyNDMsImV4cCI6MjA5MjQ5ODI0M30.ineH3EyjkS8m8CYmm1NACu9qksS5u4cs94q1Hq9MxF4",
-    "CLAUDE_TRACKER_ADMIN_USER": "admin",
-    "CLAUDE_TRACKER_ADMIN_PASS": "admin",
-}
+# Central Supabase project. Anon key is deliberately baked in — Supabase
+# RLS on the ``events`` table is the real security boundary (see
+# backend/supabase_schema.sql). Rotate via the Supabase dashboard if a
+# machine goes missing; teammates pick up the new key on next release.
+DEFAULT_SUPABASE_URL = "https://mbezrhsfiewdpulxmtrk.supabase.co"
+DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1iZXpyaHNmaWV3ZHB1bHhtdHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MjIyNDMsImV4cCI6MjA5MjQ5ODI0M30.ineH3EyjkS8m8CYmm1NACu9qksS5u4cs94q1Hq9MxF4"
+
+# Where "Open Dashboard" in the tray menu points. The dashboard lives as
+# a standalone deploy now (see backend/ — run it wherever you want and
+# replace this URL before building). Empty string falls back to /ping.
+DEFAULT_DASHBOARD_URL = ""
 
 
 def app_data_dir() -> Path:
@@ -79,17 +68,11 @@ class Config:
     shared_secret: str
     created_at: float
     paused: bool = False
-    backend_url: str = DEFAULT_BACKEND_URL
-    backend_api_key: str = DEFAULT_BACKEND_API_KEY
-    # Every exe runs its own embedded FastAPI backend by default, all
-    # pointing at the shared Supabase — see DEFAULT_BACKEND_ENV above.
-    run_backend: bool = DEFAULT_RUN_BACKEND
-    backend_host: str = DEFAULT_BACKEND_HOST
-    backend_port: int = DEFAULT_BACKEND_PORT
-    # Extra env vars pushed into os.environ before the embedded backend
-    # imports — e.g. CLAUDE_TRACKER_ADMIN_USER/PASS, SUPABASE_URL,
-    # SUPABASE_ANON_KEY, CLAUDE_TRACKER_BACKEND_DB.
-    backend_env: dict = field(default_factory=lambda: dict(DEFAULT_BACKEND_ENV))
+    # Where the uploader POSTs rows. Baked in — never read from config.json,
+    # never overridden by env, so teammates' installs stay in lockstep.
+    supabase_url: str = DEFAULT_SUPABASE_URL
+    supabase_key: str = DEFAULT_SUPABASE_KEY
+    dashboard_url: str = DEFAULT_DASHBOARD_URL
     launch_time: float = field(default_factory=time.time)
 
     _lock: RLock = field(default_factory=RLock, repr=False, compare=False)

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Claude Usage Tracker",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "description": "Per-user token tracking for shared claude.ai accounts. Requires the desktop tracker app.",
   "permissions": ["webNavigation", "storage", "tabs"],
   "host_permissions": [
