@@ -16,7 +16,7 @@ import os
 import sys
 import threading
 
-from . import backend_client, claude_code_parser, desktop_detector
+from . import backend_client, claude_code_parser, desktop_detector, windows_setup
 from .api_server import run_server
 from .config import API_HOST, API_PORT, Config, app_data_dir, os_username
 from .events import EventStore
@@ -75,6 +75,30 @@ def _setup_logging() -> None:
 
 def main() -> int:
     _setup_logging()
+
+    # Handle CLI flags: --uninstall removes registry entries and exits;
+    # `claudetracker://start` (and variants) is forwarded by the Windows
+    # protocol handler as argv[1] — ignore it and boot normally so clicking
+    # the blocked-page button just launches the tracker.
+    argv = sys.argv[1:]
+    if any(a in ("--uninstall", "-u") for a in argv):
+        windows_setup.uninstall()
+        print("ClaudeTracker uninstalled (registry entries removed).")
+        return 0
+
+    # Single-instance guard: if the API port is already bound, another
+    # instance is live. The protocol handler launches a fresh process on
+    # every click, so without this we'd pile up duplicates.
+    if windows_setup.already_running_on(API_HOST, API_PORT):
+        print("ClaudeTracker is already running — exiting.")
+        return 0
+
+    # Self-install on every run. Idempotent; only writes if anything changed,
+    # and silently no-ops when running from source.
+    try:
+        windows_setup.install()
+    except Exception as exc:  # noqa: BLE001 — never let registry issues crash startup
+        logging.getLogger(__name__).warning("self-install failed: %s", exc)
 
     config = Config.load_or_create()
     store = EventStore()

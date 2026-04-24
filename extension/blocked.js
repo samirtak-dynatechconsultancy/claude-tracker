@@ -1,40 +1,57 @@
-// Blocked page: read ?status=&dest=, show the right hint, retry ping.
+// Blocked page: show status, offer to launch the exe via the custom
+// protocol handler, and auto-retry the ping so the page unblocks itself
+// the moment the tracker comes up.
 
 const params = new URLSearchParams(location.search);
-const status = params.get("status") || "down";
+const initialStatus = params.get("status") || "down";
 const dest = params.get("dest") || "https://claude.ai/";
 
-document.getElementById("status").textContent = status;
-document.getElementById("status").className = "status " + status;
-document.getElementById("dest").textContent = dest;
+const statusEl = document.getElementById("status");
+const destEl = document.getElementById("dest");
+const hintDown = document.getElementById("hint-down");
+const hintPaused = document.getElementById("hint-paused");
+const autoNote = document.getElementById("auto-retry-note");
 
-if (status === "paused") {
-  document.getElementById("hint-down").style.display = "none";
-  document.getElementById("hint-paused").style.display = "";
-}
+destEl.textContent = dest;
+applyStatus(initialStatus);
 
-// Swap the install guide link to the project's install.md on disk if we
-// know the path (we don't by default, so this stays as a placeholder).
 document.getElementById("btn-install").href =
-  "https://github.com/anthropics/claude-code"; // placeholder; replace with your install page
+  "https://github.com/samirtak-dynatechconsultancy/claude-tracker/releases/latest";
 
-document.getElementById("btn-retry").addEventListener("click", async () => {
-  // Ask the background worker to re-ping; if OK, navigate to the original URL.
+document.getElementById("btn-retry").addEventListener("click", () => pingOnce(true));
+
+// Auto-retry loop: one GET_STATUS every 2s. If the tracker is up and not
+// paused, jump back to the originally-requested page. "paused" is a
+// deliberate user action, so we keep showing the paused hint instead of
+// spinning forever.
+let timer = setInterval(() => pingOnce(false), 2000);
+
+async function pingOnce(userClicked) {
   const resp = await new Promise((r) =>
     chrome.runtime.sendMessage({ type: "GET_STATUS" }, r)
   );
-  if (resp?.status === "ok") {
+  const status = resp?.status || "down";
+  if (status === "ok") {
+    clearInterval(timer);
     location.href = dest;
-  } else {
-    // Refresh this page's status text.
-    document.getElementById("status").textContent = resp?.status || "down";
-    document.getElementById("status").className = "status " + (resp?.status || "down");
-    if ((resp?.status || "down") === "paused") {
-      document.getElementById("hint-down").style.display = "none";
-      document.getElementById("hint-paused").style.display = "";
-    } else {
-      document.getElementById("hint-down").style.display = "";
-      document.getElementById("hint-paused").style.display = "none";
-    }
+    return;
   }
-});
+  applyStatus(status);
+  if (userClicked && autoNote) {
+    autoNote.textContent = "Still offline — auto-checking every 2s…";
+  }
+}
+
+function applyStatus(status) {
+  statusEl.textContent = status;
+  statusEl.className = "status " + status;
+  if (status === "paused") {
+    hintDown.style.display = "none";
+    hintPaused.style.display = "";
+    if (autoNote) autoNote.style.display = "none";
+  } else {
+    hintDown.style.display = "";
+    hintPaused.style.display = "none";
+    if (autoNote) autoNote.style.display = "";
+  }
+}

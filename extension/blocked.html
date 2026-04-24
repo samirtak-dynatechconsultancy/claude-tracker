@@ -33,17 +33,19 @@
     </p>
 
     <ul id="checklist">
-      <li>Make sure <code>ClaudeTracker.exe</code> is running (look for the green circle in your system tray).</li>
-      <li>If you haven't installed it yet, see the install guide.</li>
-      <li>If the tracker was just launched, click <b>Retry</b> below.</li>
+      <li>Click <b>Open Tracker</b> below — Chrome will ask once for permission to launch <code>ClaudeTracker.exe</code>.</li>
+      <li>If you haven't installed it yet, grab the latest exe from the install guide and run it once; it will register itself so future launches are automatic.</li>
+      <li>This page auto-unblocks within ~2 seconds of the tracker coming online.</li>
     </ul>
 
     <div class="actions">
-      <button id="btn-retry">Retry</button>
+      <a class="btn" id="btn-open" href="claudetracker://start">Open Tracker</a>
+      <button class="secondary" id="btn-retry">Retry now</button>
       <a class="btn secondary" id="btn-install" href="#" target="_blank">Install guide</a>
     </div>
 
     <p class="muted">Destination: <span id="dest"></span></p>
+    <p class="muted" id="auto-retry-note">Auto-checking every 2s…</p>
   </div>
 
   <script src="blocked.js"></script>
