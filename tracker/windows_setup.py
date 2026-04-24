@@ -22,6 +22,18 @@ PROTOCOL = "claudetracker"
 RUN_VALUE_NAME = "ClaudeTracker"
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
+# Places Claude Desktop's installer drops shortcuts. We retarget any we
+# find so that launching Claude goes through the tracker first.
+_SHORTCUT_NAME = "Claude.lnk"
+_SHORTCUT_BACKUP_SUFFIX = ".claudetracker.bak"
+
+# Where the Anthropic installer puts Claude.exe — checked in order.
+_CLAUDE_EXE_CANDIDATES = (
+    r"%LOCALAPPDATA%\AnthropicClaude\Claude.exe",
+    r"%LOCALAPPDATA%\Programs\claude-desktop\Claude.exe",
+    r"%PROGRAMFILES%\Anthropic\Claude\Claude.exe",
+)
+
 
 def _is_frozen_exe() -> bool:
     """True when running inside the PyInstaller-built exe."""
@@ -97,6 +109,15 @@ def install(quiet: bool = False) -> bool:
 
     if changed:
         log.info("Windows self-install wrote registry entries (exe=%s)", exe)
+
+    # 3. Wrap Claude Desktop shortcuts so clicking them goes through the
+    #    tracker. Best-effort — failures here shouldn't block startup.
+    try:
+        if wrap_claude_shortcuts(exe):
+            changed = True
+    except Exception as wrap_exc:  # noqa: BLE001
+        log.warning("shortcut wrap skipped: %s", wrap_exc)
+
     return changed
 
 
@@ -144,6 +165,224 @@ def _read_default(key) -> str | None:
         return val
     except (FileNotFoundError, OSError):
         return None
+
+
+def find_claude_exe() -> str | None:
+    """Locate the installed Claude Desktop executable, or None."""
+    for candidate in _CLAUDE_EXE_CANDIDATES:
+        expanded = os.path.expandvars(candidate)
+        if os.path.isfile(expanded):
+            return expanded
+    return None
+
+
+def _shortcut_locations() -> list[Path]:
+    """Places we scan for Claude Desktop's Start Menu / Desktop shortcuts."""
+    roots = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        roots += [
+            Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+            Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Anthropic",
+            Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Claude",
+        ]
+    programdata = os.environ.get("PROGRAMDATA")
+    if programdata:
+        roots += [
+            Path(programdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
+            Path(programdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Anthropic",
+        ]
+    userprofile = os.environ.get("USERPROFILE")
+    if userprofile:
+        roots.append(Path(userprofile) / "Desktop")
+        roots.append(Path(userprofile) / "OneDrive" / "Desktop")
+    return roots
+
+
+def _run_powershell(script: str) -> tuple[int, str]:
+    """Run a PowerShell snippet, return (rc, stderr)."""
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    return proc.returncode, (proc.stderr or "").strip()
+
+
+def _read_shortcut(lnk_path: Path) -> dict | None:
+    """Return {TargetPath, Arguments, WorkingDirectory} for a .lnk, or None."""
+    ps = (
+        "$s = New-Object -ComObject WScript.Shell; "
+        f"$l = $s.CreateShortcut('{lnk_path}'); "
+        "Write-Output $l.TargetPath; "
+        "Write-Output $l.Arguments; "
+        "Write-Output $l.WorkingDirectory"
+    )
+    import subprocess
+
+    proc = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            ps,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        return None
+    lines = (proc.stdout or "").splitlines()
+    # Pad to 3 lines so empty Arguments / WorkingDirectory don't blow up.
+    while len(lines) < 3:
+        lines.append("")
+    return {
+        "TargetPath": lines[0].strip(),
+        "Arguments": lines[1].strip(),
+        "WorkingDirectory": lines[2].strip(),
+    }
+
+
+def _write_shortcut(lnk_path: Path, target: str, args: str, workdir: str) -> bool:
+    """Overwrite a .lnk with the given target + arguments."""
+    # Quote-escape the target/args for embedding in a PowerShell single-quoted string.
+    def q(s: str) -> str:
+        return s.replace("'", "''")
+
+    ps = (
+        "$s = New-Object -ComObject WScript.Shell; "
+        f"$l = $s.CreateShortcut('{q(str(lnk_path))}'); "
+        f"$l.TargetPath = '{q(target)}'; "
+        f"$l.Arguments = '{q(args)}'; "
+        f"$l.WorkingDirectory = '{q(workdir)}'; "
+        "$l.Save()"
+    )
+    rc, err = _run_powershell(ps)
+    if rc != 0:
+        log.warning("failed to write shortcut %s: %s", lnk_path, err)
+        return False
+    return True
+
+
+def wrap_claude_shortcuts(tracker_exe: str) -> bool:
+    """Retarget any Claude Desktop .lnk to run the tracker first.
+
+    Strategy: find every ``Claude.lnk`` in Start Menu / Desktop folders.
+    If its target is Claude.exe (not already our wrapper), back up the
+    original TargetPath in a sibling ``.claudetracker.bak`` JSON file and
+    rewrite the .lnk to point at ``ClaudeTracker.exe --launch-claude``.
+
+    Returns True if anything was rewritten.
+    """
+    import json as _json
+
+    changed = False
+    tracker_exe_norm = os.path.normcase(os.path.abspath(tracker_exe))
+
+    for root in _shortcut_locations():
+        if not root.exists():
+            continue
+        for lnk in root.rglob(_SHORTCUT_NAME):
+            info = _read_shortcut(lnk)
+            if not info:
+                continue
+            target = info["TargetPath"]
+            # Skip if already pointing at our tracker.
+            if os.path.normcase(os.path.abspath(target or "")) == tracker_exe_norm:
+                continue
+            # Only retarget if the original looks like Claude Desktop.
+            if "claude.exe" not in target.lower():
+                continue
+
+            # Save the original target/args so we can restore later and so
+            # --launch-claude knows where to forward to even if we miss
+            # Claude in the default install paths.
+            backup = lnk.with_suffix(lnk.suffix + _SHORTCUT_BACKUP_SUFFIX)
+            if not backup.exists():
+                try:
+                    backup.write_text(_json.dumps(info), encoding="utf-8")
+                except OSError:
+                    pass
+
+            workdir = info["WorkingDirectory"] or os.path.dirname(target)
+            if _write_shortcut(lnk, tracker_exe, "--launch-claude", workdir):
+                log.info("wrapped Claude shortcut: %s", lnk)
+                changed = True
+
+    return changed
+
+
+def unwrap_claude_shortcuts() -> None:
+    """Restore any shortcuts we modified back to their original targets."""
+    import json as _json
+
+    for root in _shortcut_locations():
+        if not root.exists():
+            continue
+        for backup in root.rglob(_SHORTCUT_NAME + _SHORTCUT_BACKUP_SUFFIX):
+            try:
+                info = _json.loads(backup.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            lnk = backup.with_name(backup.name[: -len(_SHORTCUT_BACKUP_SUFFIX)])
+            _write_shortcut(
+                lnk,
+                info.get("TargetPath", ""),
+                info.get("Arguments", ""),
+                info.get("WorkingDirectory", ""),
+            )
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+
+
+def launch_claude_and_continue() -> str | None:
+    """Spawn Claude Desktop in the background. Return the path launched, or None."""
+    import subprocess
+
+    # Prefer the original target recorded in a backup file (covers custom
+    # install paths where find_claude_exe() would miss it). Fall back to
+    # the known default locations.
+    for root in _shortcut_locations():
+        if not root.exists():
+            continue
+        for backup in root.rglob(_SHORTCUT_NAME + _SHORTCUT_BACKUP_SUFFIX):
+            try:
+                import json as _json
+
+                info = _json.loads(backup.read_text(encoding="utf-8"))
+                target = info.get("TargetPath", "")
+                if target and os.path.isfile(target):
+                    subprocess.Popen(
+                        [target] + (info.get("Arguments", "") or "").split(),
+                        cwd=info.get("WorkingDirectory") or None,
+                        close_fds=True,
+                    )
+                    return target
+            except Exception:  # noqa: BLE001
+                continue
+
+    target = find_claude_exe()
+    if target:
+        subprocess.Popen([target], close_fds=True)
+        return target
+    return None
 
 
 def already_running_on(host: str, port: int) -> bool:

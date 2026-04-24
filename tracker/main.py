@@ -82,16 +82,36 @@ def main() -> int:
     # the blocked-page button just launches the tracker.
     argv = sys.argv[1:]
     if any(a in ("--uninstall", "-u") for a in argv):
+        windows_setup.unwrap_claude_shortcuts()
         windows_setup.uninstall()
-        print("ClaudeTracker uninstalled (registry entries removed).")
+        print("ClaudeTracker uninstalled (registry + shortcuts restored).")
         return 0
+
+    launch_claude_requested = any(a == "--launch-claude" for a in argv)
 
     # Single-instance guard: if the API port is already bound, another
     # instance is live. The protocol handler launches a fresh process on
     # every click, so without this we'd pile up duplicates.
     if windows_setup.already_running_on(API_HOST, API_PORT):
-        print("ClaudeTracker is already running — exiting.")
+        if launch_claude_requested:
+            # Tracker's up — just hand off to Claude Desktop and exit.
+            target = windows_setup.launch_claude_and_continue()
+            if target:
+                print(f"ClaudeTracker already running; launched Claude ({target}).")
+            else:
+                print("ClaudeTracker already running; Claude.exe not found.")
+        else:
+            print("ClaudeTracker is already running — exiting.")
         return 0
+
+    # In --launch-claude mode, spawn Claude alongside booting the tracker
+    # so the user doesn't stare at nothing while uvicorn starts up.
+    if launch_claude_requested:
+        target = windows_setup.launch_claude_and_continue()
+        if target:
+            print(f"Launching Claude Desktop ({target}) alongside tracker.")
+        else:
+            print("Claude Desktop not found — starting tracker only.")
 
     # Self-install on every run. Idempotent; only writes if anything changed,
     # and silently no-ops when running from source.
